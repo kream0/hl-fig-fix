@@ -1,0 +1,4 @@
+/target
+# release binaries are published as GitHub release assets
+/hl-fig-fix.exe
+/hl-fig-fix-linux

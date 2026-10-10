@@ -1,0 +1,9 @@
+[package]
+name = "hl-fig-fix"
+version = "0.1.0"
+edition = "2024"
+description = "Fixes Hogwarts Legacy saves where Professor Fig can't be talked to after learning Incendio (HL-20832)"
+
+[dependencies]
+oozextract = "0.5.5"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
