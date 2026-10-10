@@ -10,6 +10,13 @@ save so the quest restarts its "go talk to Fig" step the next time you load.
 This fix was made and confirmed working on a real stuck Steam save on 2026-10-10. Read
 [What was tested](#what-was-tested) before relying on it.
 
+> **Made with AI ("vibecoded").** The research, save-format reverse engineering, code and this README
+> were done by [Claude Code](https://claude.com/claude-code) running **Claude Opus 5.5**. A human (the repo
+> owner) directed it, played the game and confirmed the fix in-game. Running an unsigned exe from a
+> stranger deserves a check, whoever or whatever wrote it. See
+> [Checking it for malicious code](#checking-it-for-malicious-code) for how to verify it yourself or with
+> your own AI agent.
+
 ---
 
 ## Quick start
@@ -20,8 +27,8 @@ This fix was made and confirmed working on a real stuck Steam save on 2026-10-10
 2. Download **`hl-fig-fix.exe`** from the [latest release](https://github.com/kream0/hl-fig-fix/releases/latest)
    and double-click it.
    - If Windows SmartScreen appears ("Windows protected your PC"), click **More info → Run anyway**.
-     The exe isn't code-signed. If you'd rather not run it, the full source is in this repository, see
-     [Building from source](#building-from-source).
+     The exe isn't code-signed. To verify it first, see
+     [Checking it for malicious code](#checking-it-for-malicious-code).
 3. The tool lists your saves. Press **Enter** to fix the ones marked `STUCK`.
 4. Start the game, load the save it recommends, and talk to Fig.
 
@@ -118,6 +125,98 @@ if you don't have such a save or don't want to redo that part.
 
 ---
 
+## Checking it for malicious code
+
+You'd be running an unsigned program, written by an AI and published by a stranger, that edits files on
+your PC. It's worth checking first. The whole program is two short files, about 620 lines of Rust:
+[`src/main.rs`](src/main.rs) and [`src/save.rs`](src/save.rs).
+
+**What it should do, and nothing else:**
+
+- **Reads** `.sav` files in the Hogwarts Legacy save folder, or the paths you give it. It also reads the
+  `LOCALAPPDATA` and `HOME` environment variables, and on Linux Steam's `libraryfolders.vdf` to find
+  other Steam libraries.
+- **Writes** only these files:
+  - Backups in `Hogwarts Legacy\FigFixBackups\`, or in a `FigFixBackups` folder next to a save you
+    pointed it at.
+  - The patched save, written as `HL-xx-yy.sav.figfix-tmp` and then renamed over the original.
+  - A temporary `hl-fig-fix-*.db` in your temp folder, deleted when it's done.
+  - For `unpack` / `pack`, only the output path you give it.
+- **Runs** one external program: `tasklist` on Windows, to check the game is closed. On Linux it reads
+  `/proc` instead.
+- **No** network access, registry access, admin rights, `unsafe` code of its own, or `build.rs`.
+
+**Dependencies:** there are two direct ones, pinned in [`Cargo.lock`](Cargo.lock):
+
+- [`oozextract`](https://crates.io/crates/oozextract), a pure-Rust Oodle decompressor.
+- [`rusqlite`](https://crates.io/crates/rusqlite) with `bundled`, which compiles SQLite's C source in
+  `libsqlite3-sys`'s build script.
+
+`Cargo.lock` lists more crates than are actually compiled. To see the real set, run
+`cargo tree -e normal,build --target x86_64-pc-windows-gnu`.
+
+**Safest option: don't use the release binaries at all.** Read the source and build it yourself (see
+[Building from source](#building-from-source)).
+
+**Checking the release binaries against the source:** the builds are reproducible. With the same
+toolchain (**rustc 1.99.0, cargo-zigbuild 0.23.4, Zig 0.17.0** via `pip install ziglang==0.17.0`, Cargo
+in its default `~/.cargo`), the cross-compile commands in [Building from source](#building-from-source)
+give:
+
+- `hl-fig-fix-linux`: the exact same file, with the same SHA-256.
+- `hl-fig-fix.exe`: the same file except for the 4-byte link timestamp in its PE header, which records
+  when it was built. This script compares two exes while ignoring that field:
+
+  ```sh
+  python3 - hl-fig-fix.exe target/x86_64-pc-windows-gnu/release/hl-fig-fix.exe <<'EOF'
+  import sys, struct
+  def norm(path):
+      d = bytearray(open(path, "rb").read())
+      pe = struct.unpack_from("<I", d, 0x3C)[0]
+      d[pe + 8:pe + 12] = bytes(4)  # COFF TimeDateStamp: when the exe was linked
+      return bytes(d)
+  a, b = sys.argv[1:3]
+  print("identical apart from the link timestamp" if norm(a) == norm(b) else "DIFFERENT")
+  EOF
+  ```
+
+This was verified by rebuilding from a fresh clone of this repo in a different directory, but on the
+same machine that built the release. A different machine hasn't been tried yet.
+
+### Prompt for your AI agent
+
+Paste this into Claude Code, or any coding agent that can run commands:
+
+```text
+Audit https://github.com/kream0/hl-fig-fix for malicious or unexpected behavior before I run it.
+It claims to be a small Rust tool that patches one value in Hogwarts Legacy save files.
+
+1. Clone it and read every file: src/main.rs, src/save.rs, Cargo.toml, Cargo.lock, README.md.
+   Look for: network access; launching any program other than `tasklist`; reading or writing files
+   outside the Hogwarts Legacy save folder, its FigFixBackups folder and the temp folder; registry
+   access; persistence (startup entries, scheduled tasks, services); access to credentials, browser
+   data or other personal files; obfuscated or encoded payloads; `unsafe` code; build.rs or any
+   other code that runs at build time.
+2. Check the dependencies. Run `cargo tree -e normal,build` for my platform, confirm each crate is
+   the genuine crates.io package at the version in Cargo.lock, and flag anything a save editor
+   shouldn't need.
+3. Compare the code's actual behavior with the README section "Checking it for malicious code" and
+   report every difference.
+4. If I'm going to use a release binary rather than build it myself: download it from the v0.1.0
+   GitHub release, check its SHA-256 against the README, and if the toolchain is available, rebuild
+   it as the README describes and compare (the .exe should differ only in its PE link timestamp).
+5. Build it (or use the verified binary) and run it with `--check` on a COPY of my save folder.
+   Confirm it modifies nothing.
+
+Finish with a clear verdict, safe to run or not, with your reasons and the exact lines of code
+that support them.
+```
+
+An AI review lowers the risk but doesn't prove the code is safe. The code is short enough to read
+yourself.
+
+---
+
 ## What the bug actually is
 
 Hogwarts Legacy stores almost all game state in a **SQLite database embedded inside each `.sav`**. Quest
@@ -185,7 +284,9 @@ it never points you back to an old save when you've already moved on.
 
 ---
 
-## How I found it
+## How Claude found it
+
+This part is in Claude's words: "I" is Claude Code, except where the game was played.
 
 ### 1. Research
 
@@ -284,7 +385,8 @@ Other save tables that helped:
 
 1. I patched the most recent stuck save (one value, as above) and installed it into a manual save slot,
    after backing up the whole save folder.
-2. I loaded it in Fig's office. The conversation started and the quest continued.
+2. The player (the repo owner) loaded it in Fig's office. The conversation started and the quest
+   continued.
 3. A save made afterwards showed the expected healthy state: graph rows present, sub-mission complete,
    quest active at its next step.
 
@@ -325,6 +427,7 @@ problem. Don't apply this blindly.
 
 | Tool | Used for |
 |---|---|
+| [Claude Code](https://claude.com/claude-code) (Claude Opus 5.5) | The whole investigation, the code and this README, driving every tool below |
 | `curl` + Reddit's `.rss` endpoint | Reading the bug report thread |
 | `xxd`, `strings` | First look at the `.sav` layout |
 | Rust + [`oozextract`](https://crates.io/crates/oozextract) 0.5.5 | Oodle Kraken decompression of the embedded database |
